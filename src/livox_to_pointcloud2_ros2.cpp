@@ -12,29 +12,42 @@
 
 namespace livox_to_pointcloud2 {
 
-LivoxToPointCloud2::LivoxToPointCloud2(const rclcpp::NodeOptions& options) : rclcpp::Node("livox_to_pointcloud2", options) {
-  points_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/points", rclcpp::SensorDataQoS());
+LivoxToPointCloud2::LivoxToPointCloud2(const rclcpp::NodeOptions& options)
+: rclcpp::Node("livox_to_pointcloud2", options)
+{
+  // BEST_EFFORT publisher for sensor streams
+  auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile();
+
+  points_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+    "/livox/lidar/pcl2",
+    qos
+  );
+
+auto in_qos = rclcpp::QoS(rclcpp::KeepLast(64)).reliable().durability_volatile();
 
 #ifdef LIVOX_ROS2_DRIVER
-  // livox_ros2_driver
-  livox_sub =
-    this->create_subscription<livox_interfaces::msg::CustomMsg>("/livox/lidar", rclcpp::SensorDataQoS(), [this](const livox_interfaces::msg::CustomMsg::ConstSharedPtr livox_msg) {
+  livox_sub = this->create_subscription<livox_interfaces::msg::CustomMsg>(
+    "/livox/lidar",
+    in_qos,
+    [this](const livox_interfaces::msg::CustomMsg::ConstSharedPtr livox_msg) {
       const auto points_msg = converter.convert(*livox_msg);
       points_pub->publish(*points_msg);
-    });
+    }
+  );
 #endif
 
 #ifdef LIVOX_ROS_DRIVER2
-  // livox_ros_driver2
   livox2_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-    "/livox2/lidar",
-    rclcpp::SensorDataQoS(),
+    "/livox/lidar",
+    in_qos,
     [this](const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr livox_msg) {
       const auto points_msg = converter.convert(*livox_msg);
       points_pub->publish(*points_msg);
-    });
+    }
+  );
 #endif
 }
+
 
 LivoxToPointCloud2::~LivoxToPointCloud2() {}
 

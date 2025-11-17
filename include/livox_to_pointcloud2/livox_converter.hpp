@@ -16,6 +16,7 @@ using PointCloud2 = sensor_msgs::msg::PointCloud2;
 using PointCloud2Ptr = sensor_msgs::msg::PointCloud2::SharedPtr;
 using PointCloud2ConstPtr = sensor_msgs::msg::PointCloud2::ConstSharedPtr;
 #endif
+#include <cstring>
 
 namespace livox_to_pointcloud2 {
 
@@ -47,27 +48,48 @@ public:
 
   template <typename CustomMsg>
   PointCloud2ConstPtr convert(const CustomMsg& livox_msg) {
-    points_msg->header = livox_msg.header;
-    points_msg->width = livox_msg.point_num;
-    points_msg->height = 1;
+    auto msg = std::make_shared<PointCloud2>();
+    msg->header = livox_msg.header;
+    msg->fields = points_msg->fields;
+    msg->is_bigendian = false;
+    msg->is_dense = true;
+    msg->point_step = sizeof(float) * 4 + sizeof(uint32_t) + sizeof(uint8_t) * 2;
+    msg->width  = livox_msg.point_num;
+    msg->height = 1;
+    msg->row_step = msg->width * msg->point_step;
+    msg->data.resize(msg->row_step);
 
-    points_msg->row_step = livox_msg.point_num * points_msg->point_step;
-    points_msg->data.resize(points_msg->row_step);
+    uint8_t* ptr = msg->data.data();                      // single declaration
+    const size_t N = static_cast<size_t>(livox_msg.point_num);
 
-    unsigned char* ptr = points_msg->data.data();
-    for (int i = 0; i < livox_msg.point_num; i++) {
-      *reinterpret_cast<float*>(ptr + points_msg->fields[0].offset) = livox_msg.points[i].x;
-      *reinterpret_cast<float*>(ptr + points_msg->fields[1].offset) = livox_msg.points[i].y;
-      *reinterpret_cast<float*>(ptr + points_msg->fields[2].offset) = livox_msg.points[i].z;
-      *reinterpret_cast<std::uint32_t*>(ptr + points_msg->fields[3].offset) = livox_msg.points[i].offset_time;
-      *reinterpret_cast<float*>(ptr + points_msg->fields[4].offset) = livox_msg.points[i].reflectivity;
-      *reinterpret_cast<std::uint8_t*>(ptr + points_msg->fields[5].offset) = livox_msg.points[i].tag;
-      *reinterpret_cast<std::uint8_t*>(ptr + points_msg->fields[6].offset) = livox_msg.points[i].line;
+    for (size_t i = 0; i < N; ++i) {
+      const auto& p = livox_msg.points[i];
 
-      ptr += points_msg->point_step;
+      // x, y, z
+      std::memcpy(ptr + msg->fields[0].offset, &p.x, sizeof(float));
+      std::memcpy(ptr + msg->fields[1].offset, &p.y, sizeof(float));
+      std::memcpy(ptr + msg->fields[2].offset, &p.z, sizeof(float));
+
+      // t (offset_time) as uint32
+      std::memcpy(ptr + msg->fields[3].offset, &p.offset_time, sizeof(uint32_t));
+
+      // intensity (reflectivity may be integer in some Livox flavors) -> float
+      float intensity = static_cast<float>(p.reflectivity);
+      std::memcpy(ptr + msg->fields[4].offset, &intensity, sizeof(float));
+
+      // tag, line
+      std::memcpy(ptr + msg->fields[5].offset, &p.tag,  sizeof(uint8_t));
+      std::memcpy(ptr + msg->fields[6].offset, &p.line, sizeof(uint8_t));
+
+      ptr += msg->point_step;
     }
 
-    return points_msg;
+    // Optional: ensure a frame_id
+    if (msg->header.frame_id.empty()) {
+      msg->header.frame_id = "livox_frame";
+    }
+
+    return msg;
   }
 
 private:
